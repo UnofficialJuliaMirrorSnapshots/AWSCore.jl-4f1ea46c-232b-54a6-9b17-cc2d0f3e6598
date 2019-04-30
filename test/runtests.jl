@@ -21,6 +21,42 @@ AWSCore.set_debug_level(1)
 
 aws = aws_config()
 
+@testset "NoAuth" begin
+    pub_request1 = Dict{Symbol, Any}(
+        :service => "s3",
+        :headers => Dict{String, String}("Range" => "bytes=0-0"),
+        :content => "",
+        :resource => "/invenia-static-website-content/invenia_ca/index.html",
+        :url => "https://s3.us-east-1.amazonaws.com/invenia-static-website-content/invenia_ca/index.html",
+        :verb => "GET",
+        :region => "us-east-1",
+        :creds => nothing,
+    )
+    pub_request2 = Dict{Symbol, Any}(
+        :service => "s3",
+        :headers => Dict{String, String}("Range" => "bytes=0-0"),
+        :content => "",
+        :resource => "ryft-public-sample-data/AWS-x86-AMI-queries.json",
+        :url => "https://s3.amazonaws.com/ryft-public-sample-data/AWS-x86-AMI-queries.json",
+        :verb => "GET",
+        :region => "us-east-1",
+        :creds => nothing,
+    )
+    response = nothing
+    try
+        response = AWSCore.do_request(pub_request1)
+    catch e
+        println(e)
+        @test ecode(e) in ["AccessDenied", "NoSuchEntity"]
+        try
+            response = AWSCore.do_request(pub_request2)
+        catch e
+            println(e)
+            @test ecode(e) in ["AccessDenied", "NoSuchEntity"]
+        end
+    end
+    @test response == "<" || response == UInt8['[']
+end
 @testset "Load Credentials" begin
     user = aws_user_arn(aws)
 
@@ -536,8 +572,14 @@ end
     @test ex.message == message
 end
 
-if get(ENV, "AWSCORE_EC2", "false") == "true"
+instance_type = get(ENV, "AWSCORE_INSTANCE_TYPE", "")
+if instance_type == "EC2"
     @testset "EC2" begin
+        @test_nowarn AWSCore.ec2_metadata("instance-id")
+        @test startswith(AWSCore.ec2_metadata("instance-id"), "i-")
+
+        @test AWSCore.localhost_maybe_ec2()
+        @test AWSCore.localhost_is_ec2()
         @test_nowarn AWSCore.ec2_instance_credentials()
         ec2_creds = AWSCore.ec2_instance_credentials()
         @test ec2_creds !== nothing
@@ -546,7 +588,18 @@ if get(ENV, "AWSCORE_EC2", "false") == "true"
         @test default_creds.access_key_id == ec2_creds.access_key_id
         @test default_creds.secret_key == ec2_creds.secret_key
     end
+elseif instance_type == "ECS"
+    @testset "ECS" begin
+        @test_nowarn AWSCore.ecs_instance_credentials()
+        ecs_creds = AWSCore.ecs_instance_credentials()
+        @test ecs_creds !== nothing
+
+        default_creds = AWSCredentials()
+        @test default_creds.access_key_id == ecs_creds.access_key_id
+        @test default_creds.secret_key == ecs_creds.secret_key
+    end
 end
+
 end # testset "AWSCore"
 
 
